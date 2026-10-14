@@ -9,7 +9,7 @@ YouTube / YouTube Studio の動画プレーヤーに **Peak / VU / LUFS** メー
 - 広告再生中・一時停止中は Integrated に加算しない
 - ドラッグで移動、全画面でも表示。ツールバーアイコン / `Alt+Shift+M` で表示切替
 
-## [ダウンロード]([URL](https://github.com/TecnohShinonome/yt-db-meter/archive/refs/heads/main.zip))　
+## [ダウンロード](https://github.com/TecnohShinonome/yt-db-meter/archive/refs/heads/main.zip)
 
 ## インストール
 1. `chrome://extensions` → デベロッパーモード ON
