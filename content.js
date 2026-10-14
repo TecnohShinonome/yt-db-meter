@@ -7,40 +7,44 @@
   const TARGET = -14;            // YouTube 基準ラウドネス
   const VU_REF = -18;            // 0 VU = -18 dBFS (sine RMS)
   const ABS_GATE_E = Math.pow(10, (-70 + 0.691) / 10);
-  const S = { visible: true, pre: true, posX: 0.02, posY: 0.04 };   // pre: 音量フェーダー前で計測
-
+  const S = { pre: true, num: false, visible: true, posX: 0.02, posY: 0.04 };
   let ctx = null, cur = null, pending = null;
   const graphs = new WeakMap();
-  let host, root, canvas, c2d, elStatus, elNums, btnPre, btnPost;
-  function updMode() { if (!btnPre) return; btnPre.classList.toggle('on', S.pre); btnPost.classList.toggle('on', !S.pre); }
+  let host, root, canvas, c2d, elStatus, elNums, btnPre, btnPost, btnNum;
 
   const st = {};
   const L = { sub: [], gate: [], gatePre: [], lastT: 0 };
   function resetMeters() {
     Object.assign(st, {
-      peak: [-90, -90], hold: [-90, -90], holdT: [0, 0], max: [-Infinity, -Infinity],
+      peak: [-90, -90], hold: [-90, -90], holdT: [0, 0], clipT: [0, 0], max: [-Infinity, -Infinity],
       vu1: [0, 0], vu2: [0, 0], lastT: ctx ? ctx.currentTime : 0, lastFrame: 0,
     });
   }
-  function resetLoudness() { L.sub = []; L.gate = []; L.gatePre = []; L.lastT = ctx ? ctx.currentTime : 0; }
+  let lastLo = { m: -Infinity, s: -Infinity, i: -Infinity };
+  function resetLoudness() {
+    L.sub = []; L.gate = []; L.gatePre = []; L.lastT = ctx ? ctx.currentTime : 0;
+    lastLo = { m: -Infinity, s: -Infinity, i: -Infinity };
+  }
   resetMeters(); resetLoudness();
 
   const db = x => (x > 0 ? 20 * Math.log10(x) : -Infinity);
   const lk = e => (e > 0 ? -0.691 + 10 * Math.log10(e) : -Infinity);
-  const fmt = v => (Number.isFinite(v) ? v.toFixed(1) : '-∞');
+  const fmt = x => (!Number.isFinite(x) ? '-inf' : (x > 0 ? '+' : '') + x.toFixed(1));
   // 実効音量（hook 済みなら YouTube が設定した仮想値）
   function vol() {
     if (!cur) return 0;
     if (cur.hooked) return cur.vMute ? 0 : cur.vVol;
     return cur.video.muted ? 0 : cur.video.volume;
   }
-  // 計測信号 → 表示値の補正 dB。hooked: 信号はPRE / 未hook: 信号はPOST
+  // 計測信号 → 表示値の補正 dB（hooked: PRE時は0 / POST時は音量分下げる）
   function offset() {
     const v = vol();
-    if (cur?.hooked) return S.pre ? 0 : (v > 0 ? 20 * Math.log10(v) : -Infinity);
-    return S.pre && v > 0 ? -20 * Math.log10(v) : 0;
+    if (cur && cur.hooked) {
+      return S.pre ? 0 : (v > 0 ? 20 * Math.log10(v) : -Infinity);
+    }
+    return S.pre ? (v > 0 ? -20 * Math.log10(v) : 0) : 0;
   }
-  const isAd = () => !!(cur && cur.video.closest('.ad-showing'));
+  const isAd = () => !!(cur && cur.video.closest('.ad-showing, .ad-interrupting'));
 
   // ---------- Audio graph ----------
   function build(ac, video) {
@@ -74,6 +78,7 @@
       try { g = build(ctx, video); } catch (e) { console.warn('[yt-db-meter]', e); setStatus('接続失敗'); return; }
       graphs.set(video, g);
       video.addEventListener('loadstart', () => { resetMeters(); resetLoudness(); });
+      video.addEventListener('seeked', () => { if (video.currentTime < 0.5) { resetMeters(); resetLoudness(); } });
     }
     cur = { video, g, hooked: false, vVol: 1, vMute: false };
     hook(cur);
@@ -114,7 +119,7 @@
   }
 
   // ---------- UI ----------
-  const W = 124, H = 232, TOP = 18, BOT = H - 6;
+  const W = 124, H = 232, TOP = 25, BOT = H - 6;
   function makeUI() {
     host = document.createElement('div');
     host.id = 'ytdbm-host';
@@ -124,36 +129,58 @@
     root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `
 <style>
-.p{font:11px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#e8e8e8;background:rgba(12,12,16,.82);
-   border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:4px 6px 6px;user-select:none;opacity:.88;
-   backdrop-filter:blur(4px)}
-.p:hover{opacity:1}
-.hd{display:flex;gap:4px;align-items:center;cursor:move;margin-bottom:2px}
-.t{font-weight:700;white-space:nowrap;flex:1}
-.st{color:#ffcf5a;font-size:10px}.st:empty{display:none}
-button{font:10px ui-monospace,Menlo,monospace;color:#ddd;background:#2a2a32;border:1px solid #444;border-radius:4px;padding:0 4px;cursor:pointer}
-button:hover{background:#3a3a46}
-button.on{background:#2f7fe0;border-color:#5aa2ff;color:#fff;font-weight:700}
-.seg{display:flex}.seg button:first-child{border-radius:4px 0 0 4px}.seg button:last-child{border-radius:0 4px 4px 0;border-left:0}
+.p{font:11px/1.3 ui-monospace,Menlo,Consolas,monospace;color:#e8e8e8;
+   background:linear-gradient(180deg, rgba(14,18,25,.68) 0%, rgba(8,10,16,.76) 100%);
+   border:1px solid rgba(255,255,255,.12);box-shadow:0 8px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.10);
+   border-radius:8px;padding:4px 6px 6px;user-select:none;backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%);
+   transition:background .2s ease, border-color .2s ease}
+.p:hover{background:linear-gradient(180deg, rgba(14,18,25,.82) 0%, rgba(8,10,16,.88) 100%);border-color:rgba(255,255,255,.20)}
+.hd{display:flex;gap:3px;align-items:center;cursor:move;margin-bottom:3px;padding:1px 0 3px;border-bottom:1px solid rgba(255,255,255,.08)}
+.seg{display:inline-flex}
+.seg button:first-child{border-radius:3px 0 0 3px}
+.seg button:last-child{border-radius:0 3px 3px 0;border-left:0}
+button{font:8.5px ui-monospace,Menlo,Consolas,monospace;font-weight:700;letter-spacing:0.3px;color:#8f96a3;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:1px 4px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:all .12s ease}
+button:hover{background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.28)}
+button.on{color:#fff;background:#2563eb;border-color:#3b82f6;box-shadow:0 0 6px rgba(37,99,235,.45)}
+.btn-num.on{color:#00e5a3;background:rgba(0,229,163,.16);border-color:rgba(0,229,163,.45);box-shadow:0 0 6px rgba(0,229,163,.3)}
+.acts{display:flex;gap:3px;align-items:center;margin-left:auto}
+.st{color:#ffcf5a;font-size:10px;margin-bottom:2px}.st:empty{display:none}
+.n{font:8.5px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#cbd2e1;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.08);border-radius:4px;padding:3px 5px;margin-top:4px;white-space:pre-wrap}
+.n:empty{display:none}
+.n b{color:#fff;font-weight:700}
+.n .hi{color:#ff4a5a}
+.n .lo{color:#4aa3ff}
+.n .ok{color:#00e5a3}
 canvas{display:block;width:${W}px;height:${H}px}
 </style>
 <div class="p">
-  <div class="hd"><span class="t">dB</span>
-    <span class="seg"><button class="pre" title="音量フェーダー前の信号">PRE</button><button class="post" title="YouTube音量/ノーマライズ適用後の信号">POST</button></span>
-    <button class="rst" title="最大値・Integratedをリセット">RST</button>
-    <button class="x" title="隠す（ツールバーアイコン / Alt+Shift+M で再表示）">×</button></div>
+  <div class="hd">
+    <span class="seg">
+      <button class="pre" title="音量フェーダー前（原音）信号を計測">PRE</button>
+      <button class="post" title="YouTube音量/ノーマライズ適用後の信号を計測">POST</button>
+    </span>
+    <button class="btn-num" title="数値表示のオン/オフ">NUM</button>
+    <div class="acts">
+      <button class="rst" title="最大値・Integratedをリセット">RST</button>
+      <button class="x" title="隠す（ツールバーアイコン / Alt+Shift+M で再表示）">×</button>
+    </div>
+  </div>
   <div class="st"></div>
   <canvas></canvas>
+  <div class="n"></div>
 </div>`;
     canvas = root.querySelector('canvas');
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = W * dpr; canvas.height = H * dpr;
-    c2d = canvas.getContext('2d'); c2d.scale(dpr, dpr);
-    elStatus = root.querySelector('.st'); elNums = root.querySelector('.n');
-    btnPre = root.querySelector('.pre'); btnPost = root.querySelector('.post');
-    const setMode = p => { if (S.pre !== p) { S.pre = p; resetMeters(); save(); } updMode(); };
-    btnPre.onclick = () => setMode(true); btnPost.onclick = () => setMode(false);
-    updMode();
+    c2d = canvas.getContext('2d');
+    ensureDpr();
+    elStatus = root.querySelector('.st');
+    elNums = root.querySelector('.n');
+    btnPre = root.querySelector('.pre');
+    btnPost = root.querySelector('.post');
+    btnNum = root.querySelector('.btn-num');
+
+    btnPre.onclick = () => { S.pre = true; updMode(); lastLo.i = integ(L.gatePre); save(); };
+    btnPost.onclick = () => { S.pre = false; updMode(); lastLo.i = integ(L.gate); save(); };
+    btnNum.onclick = () => { S.num = !S.num; applyNum(); save(); };
     root.querySelector('.rst').onclick = () => { resetMeters(); resetLoudness(); };
     root.querySelector('.x').onclick = () => { S.visible = false; applyVis(); save(); };
 
@@ -171,15 +198,37 @@ canvas{display:block;width:${W}px;height:${H}px}
         S.posX = x / pr.width; S.posY = y / pr.height;
         host.style.left = S.posX * 100 + '%'; host.style.top = S.posY * 100 + '%';
       };
-      const upf = () => { hd.removeEventListener('pointermove', mv); hd.removeEventListener('pointerup', upf); save(); };
-      hd.addEventListener('pointermove', mv); hd.addEventListener('pointerup', upf);
+      const upf = () => {
+        hd.removeEventListener('pointermove', mv);
+        hd.removeEventListener('pointerup', upf);
+        hd.removeEventListener('pointercancel', upf);
+        save();
+      };
+      hd.addEventListener('pointermove', mv);
+      hd.addEventListener('pointerup', upf);
+      hd.addEventListener('pointercancel', upf);
     });
     applyVis();
+    applyNum();
+    updMode();
   }
   function setStatus(s) { if (elStatus) elStatus.textContent = s; }
   function applyVis() { if (host) host.style.display = S.visible ? '' : 'none'; }
+  function applyNum() {
+    if (!root) return;
+    if (elNums) elNums.style.display = S.num ? '' : 'none';
+    if (btnNum) btnNum.classList.toggle('on', !!S.num);
+  }
+  function updMode() {
+    if (!root) return;
+    if (btnPre && btnPost) {
+      btnPre.classList.toggle('on', S.pre);
+      btnPost.classList.toggle('on', !S.pre);
+    }
+  }
+  function save() { try { chrome.storage.local.set({ ...S }); } catch {} }
   function mount(video) {
-    const player = video.closest('#movie_player, .html5-video-player') || video.parentElement;
+    const player = video.closest('#movie_player, .html5-video-player, ytmusic-player, #player') || video.parentElement;
     if (!player) return;
     if (!host) makeUI();
     if (host.parentElement !== player) {
@@ -205,19 +254,61 @@ canvas{display:block;width:${W}px;height:${H}px}
 
   // ---------- drawing helpers (vertical) ----------
   const yf = (min, max) => d => BOT - (Math.min(max, Math.max(min, d)) - min) / (max - min) * (BOT - TOP);
-  function vbar(x, w, y, color) { c2d.fillStyle = '#26262c'; c2d.fillRect(x, TOP, w, BOT - TOP); c2d.fillStyle = color; c2d.fillRect(x, y, w, BOT - y); }
-  function scale(x, ticks, f, fmtT = String, right = false, col = '#999') {   // right=true: 目盛りの右側に数値
-    c2d.fillStyle = col; c2d.font = '8px ui-monospace,Menlo,monospace'; c2d.textAlign = right ? 'left' : 'right'; c2d.textBaseline = 'middle';
-    for (const t of ticks) {
-      const y = f(t); c2d.fillRect(right ? x : x - 2, Math.round(y), 2, 1);
+
+  function drawLedBar(x, w, yTop, colorFill) {
+    // 1. Recessed dark trough background with inset 1px border
+    c2d.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    c2d.fillRect(x, TOP, w, BOT - TOP);
+    c2d.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    c2d.lineWidth = 1;
+    c2d.strokeRect(x - 0.5, TOP - 0.5, w + 1, BOT - TOP + 1);
+
+    // 2. Unlit LED segment rungs
+    c2d.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    for (let sy = TOP; sy < BOT; sy += 3) c2d.fillRect(x, sy, w, 2);
+
+    // 3. Lit LED segments up to yTop
+    if (yTop < BOT) {
+      c2d.save();
+      c2d.beginPath();
+      c2d.rect(x, yTop, w, BOT - yTop);
+      c2d.clip();
+      c2d.fillStyle = colorFill;
+      c2d.fillRect(x, yTop, w, BOT - yTop);
+      // Dark segment separator slits (1px every 3px)
+      c2d.fillStyle = 'rgba(10, 12, 16, 0.88)';
+      for (let sy = TOP + 2; sy < BOT; sy += 3) c2d.fillRect(x, sy, w, 1);
+      c2d.restore();
+    }
+  }
+
+  function scale(x, majorTicks, minorTicks, f, fmtT = String, right = false, col = '#7e8796') {
+    if (minorTicks) {
+      c2d.fillStyle = 'rgba(255, 255, 255, 0.14)';
+      for (const t of minorTicks) {
+        const y = Math.round(f(t));
+        if (y >= TOP && y <= BOT) c2d.fillRect(right ? x : x - 1, y, 1, 1);
+      }
+    }
+    c2d.font = 'bold 8px ui-monospace,Menlo,Consolas,monospace';
+    c2d.textAlign = right ? 'left' : 'right';
+    c2d.textBaseline = 'middle';
+    for (const t of majorTicks) {
+      const y = Math.round(f(t));
+      if (y < TOP || y > BOT) continue;
+      const is0 = (t === 0), isVu = (t === VU_REF), isTgt = (t === TARGET);
+      c2d.fillStyle = is0 ? '#ff5252' : isVu ? '#f5b82e' : isTgt ? '#ff3366' : col;
+      c2d.fillRect(right ? x : x - 2, y, 2, 1);
       c2d.fillText(fmtT(t), right ? x + 3 : x - 3, Math.min(BOT - 3, Math.max(TOP + 3, y)));
     }
   }
-  function label(x, s) { c2d.fillStyle = '#bbb'; c2d.font = 'bold 9px ui-monospace,Menlo,monospace'; c2d.textAlign = 'center'; c2d.textBaseline = 'alphabetic'; c2d.fillText(s, x, 10); }
-  function grad(f, stops) {
-    const g = c2d.createLinearGradient(0, BOT, 0, TOP), span = BOT - TOP;
-    stops.forEach(([d, c], i) => { const p = (BOT - f(d)) / span; if (i) g.addColorStop(p, stops[i - 1][1]); g.addColorStop(p, c); });
-    g.addColorStop(1, stops[stops.length - 1][1]); return g;
+
+  function label(x, s) {
+    c2d.fillStyle = '#8f98a8';
+    c2d.font = 'bold 8.5px ui-monospace,Menlo,Consolas,monospace';
+    c2d.textAlign = 'center';
+    c2d.textBaseline = 'alphabetic';
+    c2d.fillText(s, x, 9);
   }
 
   // ---------- per-frame: Peak / VU ----------
@@ -237,47 +328,174 @@ canvas{display:block;width:${W}px;height:${H}px}
       st.peak[ch] = Math.max(p, st.peak[ch] - 24 * fdt);                     // 落下 24 dB/s
       if (p >= st.hold[ch]) { st.hold[ch] = p; st.holdT[ch] = t; }
       else if (t - st.holdT[ch] > 1500) st.hold[ch] = Math.max(p, st.hold[ch] - 30 * fdt);
-      if (!video.paused && !isAd()) st.max[ch] = Math.max(st.max[ch], p);
+      if (!video.paused && !isAd()) {
+        st.max[ch] = Math.max(st.max[ch], p);
+        if (p >= -0.1) st.clipT[ch] = t;
+      }
       const avg = (sa / n) * 1.1107;                                          // 平均値応答 → サイン波RMS校正
       st.vu1[ch] += (avg - st.vu1[ch]) * a; st.vu2[ch] += (st.vu1[ch] - st.vu2[ch]) * a;
     }
     draw(off);
   }
 
+  let lastDpr = 0;
+  function ensureDpr() {
+    if (!canvas || !c2d) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (dpr !== lastDpr) {
+      lastDpr = dpr;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      c2d.scale(dpr, dpr);
+    }
+  }
+
   function draw(off) {
+    ensureDpr();
     c2d.clearRect(0, 0, W, H);
-    // PEAK + VU 兼用：太バー=Peak(dBFS) / 中央の細バー=VU / 横線=Peak hold
-    const yp = yf(-60, 0);
-    label(34, 'PK/VU');
-    scale(19, [-60, -48, -36, -24, -18, -12, -6, -3, 0], yp);                                 // 左: dBFS
-    scale(48, [-20, -10, -5, 0, 3], d => yp(d + VU_REF), d => (d > 0 ? '+' + d : d), true, '#e9d9a8'); // 右: VU
-    const gp = grad(yp, [[-60, '#3ccf6a'], [-18, '#e8d03a'], [-6, '#ff4a3a']]);
+    const t = performance.now();
+    const yp = yf(-60, 0), yl = yf(-36, 0);
+
+    // --- Headers ---
+    label(34, 'PK / VU');
+    label(104, 'LUFS');
+
+    // --- Scales ---
+    scale(19, [-60, -48, -36, -24, -18, -12, -6, -3, 0], [-54, -42, -30, -15, -9, -1], yp);
+    scale(48, [-20, -10, -5, 0, 3], [-15, -7, -3, -1, 1, 2], d => yp(d + VU_REF), d => (d > 0 ? '+' + d : d), true, '#e2cb92');
+    const LX = 97;
+    scale(LX - 2, [-36, -30, -24, -20, -14, -9, -6, 0], [-33, -27, -18, -16, -12, -3], yl);
+
+    // --- Gradients ---
+    const spanP = BOT - TOP;
+    const pkGrad = c2d.createLinearGradient(0, BOT, 0, TOP);
+    const pVu = (BOT - yp(VU_REF)) / spanP;
+    const pWarn = (BOT - yp(-6)) / spanP;
+    pkGrad.addColorStop(0, '#00b84c');
+    pkGrad.addColorStop(Math.max(0, pVu - 0.05), '#2ae574');
+    pkGrad.addColorStop(pVu, '#f5b82e');
+    pkGrad.addColorStop(pWarn, '#ff7a18');
+    pkGrad.addColorStop(0.96, '#ff263e');
+    pkGrad.addColorStop(1, '#ff0d30');
+
+    const vuGrad = c2d.createLinearGradient(0, BOT, 0, TOP);
+    vuGrad.addColorStop(0, '#ffd84a');
+    vuGrad.addColorStop(pVu, '#ffe066');
+    vuGrad.addColorStop(1, '#ff3a2a');
+
+    // --- PK / VU Channels (L=0, R=1) ---
     for (let ch = 0; ch < 2; ch++) {
       const x = 21 + ch * 14;
-      vbar(x, 12, yp(st.peak[ch]), gp);
-      c2d.globalAlpha = 0.85; c2d.fillStyle = '#16161a'; c2d.fillRect(x + 4, TOP, 4, BOT - TOP); c2d.globalAlpha = 1;
-      const yvu = yp(db(st.vu2[ch]) + off);
-      c2d.fillStyle = '#fff4d6'; c2d.fillRect(x + 4, yvu, 4, BOT - yvu);
-      c2d.fillStyle = st.hold[ch] > -1 ? '#ff4a3a' : '#fff'; c2d.fillRect(x, yp(st.hold[ch]) - 1, 12, 2);
-    }
-    c2d.fillStyle = 'rgba(255,90,58,.8)'; c2d.fillRect(20, yp(VU_REF), 29, 1);              // 0 VU 線
 
-    // LUFS (S=バー, M=白線, I=▶, -14=赤線)
-    const yl = yf(-36, 0), lo = loud();
-    const LX = 97;
-    label(LX + 6, 'LUFS');
-    scale(LX - 2, [-36, -30, -24, -20, -14, -9, -6, 0], yl);
-    vbar(LX, 14, yl(lo.s), lo.s > TARGET + 1 ? '#ff8a5a' : lo.s >= TARGET - 2 ? '#3ccf6a' : '#4f8fe0');
-    c2d.fillStyle = '#fff'; if (Number.isFinite(lo.m)) c2d.fillRect(LX, yl(lo.m) - 1, 14, 2);
-    c2d.fillStyle = '#ff3b6b'; c2d.fillRect(LX - 3, yl(TARGET) - 1, 20, 2);
+      // Channel / CLIP badge above bar (y: 12..21)
+      const isClipped = (t - st.clipT[ch] < 2000);
+      c2d.fillStyle = isClipped ? '#ff1744' : 'rgba(255, 255, 255, 0.06)';
+      c2d.fillRect(x, 12, 12, 9);
+      c2d.strokeStyle = isClipped ? '#ff5252' : 'rgba(255, 255, 255, 0.10)';
+      c2d.lineWidth = 1;
+      c2d.strokeRect(x - 0.5, 11.5, 13, 10);
+      c2d.font = 'bold 7.5px ui-monospace,Menlo,Consolas,monospace';
+      c2d.textAlign = 'center';
+      c2d.textBaseline = 'middle';
+      c2d.fillStyle = isClipped ? '#ffffff' : '#8a94a6';
+      c2d.fillText(ch === 0 ? 'L' : 'R', x + 6, 16.5);
+
+      // Main Peak LED bar
+      drawLedBar(x, 12, yp(st.peak[ch]), pkGrad);
+
+      // Center VU meter needle bar
+      const yvu = Math.round(yp(db(st.vu2[ch]) + off));
+      c2d.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      c2d.fillRect(x + 4, TOP, 4, BOT - TOP);
+      if (yvu < BOT) {
+        c2d.fillStyle = vuGrad;
+        c2d.fillRect(x + 4, yvu, 4, BOT - yvu);
+        c2d.fillStyle = 'rgba(6, 8, 12, 0.85)';
+        for (let sy = TOP + 2; sy < BOT; sy += 3) c2d.fillRect(x + 4, sy, 4, 1);
+      }
+
+      // Peak Hold indicator line
+      const yh = Math.round(yp(st.hold[ch]));
+      if (yh >= TOP && yh <= BOT) {
+        const isHot = st.hold[ch] > -1;
+        c2d.fillStyle = isHot ? '#ff2a4b' : '#ffffff';
+        c2d.fillRect(x, yh - 1, 12, 2);
+        c2d.fillStyle = isHot ? 'rgba(255, 42, 75, 0.45)' : 'rgba(255, 255, 255, 0.3)';
+        c2d.fillRect(x - 1, yh - 2, 14, 4);
+      }
+    }
+
+    // 0 VU reference line across PK/VU
+    const y0vu = Math.round(yp(VU_REF));
+    c2d.fillStyle = 'rgba(245, 184, 46, 0.85)';
+    c2d.fillRect(19, y0vu, 30, 1);
+
+    // --- LUFS Channel ---
+    const lo = loud();
+    // LUFS Channel badge
+    c2d.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    c2d.fillRect(LX, 12, 14, 9);
+    c2d.strokeStyle = 'rgba(255, 255, 255, 0.10)';
+    c2d.lineWidth = 1;
+    c2d.strokeRect(LX - 0.5, 11.5, 15, 10);
+    c2d.font = 'bold 7px ui-monospace,Menlo,Consolas,monospace';
+    c2d.textAlign = 'center';
+    c2d.textBaseline = 'middle';
+    c2d.fillStyle = '#5cd9ff';
+    c2d.fillText('SHORT', LX + 7, 16.5);
+
+    // LUFS gradient
+    const spanL = BOT - TOP;
+    const pTarget = (BOT - yl(TARGET)) / spanL;
+    const lufsGrad = c2d.createLinearGradient(0, BOT, 0, TOP);
+    lufsGrad.addColorStop(0, '#1a56b8');
+    lufsGrad.addColorStop(0.35, '#00b0ff');
+    lufsGrad.addColorStop(Math.max(0, pTarget - 0.08), '#00e5a3');
+    lufsGrad.addColorStop(pTarget, '#2de672');
+    lufsGrad.addColorStop(Math.min(1, pTarget + 0.08), '#ffaa00');
+    lufsGrad.addColorStop(1, '#ff2448');
+
+    // LUFS LED bar
+    drawLedBar(LX, 14, yl(lo.s), lufsGrad);
+
+    // Momentary line (M) - Neon cyan
+    if (Number.isFinite(lo.m)) {
+      const ym = Math.round(yl(lo.m));
+      if (ym >= TOP && ym <= BOT) {
+        c2d.fillStyle = '#00f0ff';
+        c2d.fillRect(LX - 1, ym - 1, 16, 2);
+        c2d.fillStyle = 'rgba(0, 240, 255, 0.35)';
+        c2d.fillRect(LX - 2, ym - 2, 18, 4);
+      }
+    }
+
+    // YouTube Target -14 line
+    const yTgt = Math.round(yl(TARGET));
+    c2d.fillStyle = '#ff2a6d';
+    c2d.fillRect(LX - 3, yTgt, 20, 1.5);
+    c2d.fillStyle = 'rgba(255, 42, 109, 0.3)';
+    c2d.fillRect(LX - 4, yTgt - 1, 22, 3.5);
+
+    // Integrated marker (I) - Gold triangular pointer
     if (Number.isFinite(lo.i)) {
-      const y = yl(lo.i); c2d.fillStyle = '#ffd84a';
-      c2d.beginPath(); c2d.moveTo(W - 1, y - 4); c2d.lineTo(W - 1, y + 4); c2d.lineTo(W - 6, y); c2d.fill();
+      const yi = Math.round(yl(lo.i));
+      if (yi >= TOP && yi <= BOT) {
+        c2d.fillStyle = '#ffd700';
+        c2d.beginPath();
+        c2d.moveTo(W - 2, yi - 4);
+        c2d.lineTo(W - 2, yi + 4);
+        c2d.lineTo(W - 8, yi);
+        c2d.closePath();
+        c2d.fill();
+        c2d.strokeStyle = '#221a00';
+        c2d.lineWidth = 1;
+        c2d.stroke();
+      }
     }
   }
 
   // ---------- 100ms tick: LUFS ----------
-  let lastLo = { m: -Infinity, s: -Infinity, i: -Infinity };
+  let tickCount = 0;
   function loud() { return lastLo; }
 
   function integ(arr) {
@@ -309,13 +527,18 @@ canvas{display:block;width:${W}px;height:${H}px}
 
     const last4 = L.sub.slice(-4);
     const mean = (arr, k) => arr.reduce((s, b) => s + b[k], 0) / arr.length;
-    if (last4.length === 4 && last4.every(b => b.active)) {   // 400ms ブロック / 75% オーバーラップ
+    if (last4.length === 4 && last4.every(b => b.active)) {
       L.gate.push(mean(last4, 'post'));
       const p = mean(last4, 'pre'); if (Number.isFinite(p)) L.gatePre.push(p);
     }
     const k = S.pre ? 'pre' : 'post';
-    lastLo = { m: lk(mean(last4, k)), s: lk(mean(L.sub, k)), i: integ(S.pre ? L.gatePre : L.gate) };
-    if (S.visible && elNums) {
+    const m = lk(mean(last4, k)), s = lk(mean(L.sub, k));
+    tickCount++;
+    if (tickCount % 5 === 0 || !Number.isFinite(lastLo.i)) {
+      lastLo.i = integ(S.pre ? L.gatePre : L.gate);
+    }
+    lastLo.m = m; lastLo.s = s;
+    if (S.visible && S.num && elNums) {
       const d = lastLo.i - TARGET;
       const cls = !Number.isFinite(d) ? '' : d > 1 ? 'hi' : d < -1 ? 'lo' : 'ok';
       const note = isAd() ? '  [AD]' : (S.pre && vol() === 0 ? '  [MUTED]' : '');
@@ -323,19 +546,28 @@ canvas{display:block;width:${W}px;height:${H}px}
         `Peak max  L <b>${fmt(st.max[0])}</b>  R <b>${fmt(st.max[1])}</b> dBFS\n` +
         `M <b>${fmt(lastLo.m)}</b>  S <b>${fmt(lastLo.s)}</b>  I <b>${fmt(lastLo.i)}</b> LUFS\n` +
         `vs YouTube -14: <b class="${cls}">${Number.isFinite(d) ? (d > 0 ? '+' : '') + d.toFixed(1) + ' LU' : '--'}</b>` +
-        `${cls === 'hi' ? ' (YouTube側で下げられる)' : ''}${note}`;
+        `${cls === 'hi' ? ' (YouTube側で減衰)' : ''}${note}`;
     }
   }
 
   // ---------- settings & boot ----------
-  function save() { try { chrome.storage.local.set({ ...S }); } catch {} }
   chrome.storage.local.get(S, v => {
     Object.assign(S, v);
     applyVis();
-    if (host) { host.style.left = S.posX * 100 + '%'; host.style.top = S.posY * 100 + '%'; }
+    applyNum();
     updMode();
+    if (host) { host.style.left = S.posX * 100 + '%'; host.style.top = S.posY * 100 + '%'; }
   });
-  chrome.storage.onChanged.addListener(ch => { if (ch.visible) { S.visible = ch.visible.newValue; applyVis(); } });
+  chrome.storage.onChanged.addListener(ch => {
+    if (ch.visible) { S.visible = ch.visible.newValue; applyVis(); }
+  });
+  chrome.runtime.onMessage.addListener(msg => {
+    if (msg?.action === 'toggle') {
+      S.visible = !S.visible;
+      applyVis();
+      save();
+    }
+  });
 
   setInterval(() => {
     const v = findVideo();

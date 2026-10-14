@@ -1,6 +1,9 @@
-const toggle = async () => {
-  const { visible = true } = await chrome.storage.local.get('visible');
-  await chrome.storage.local.set({ visible: !visible });
-};
-chrome.action.onClicked.addListener(toggle);
-chrome.commands.onCommand.addListener(c => { if (c === 'toggle-meter') toggle(); });
+chrome.action.onClicked.addListener(tab => {
+  if (tab?.id) chrome.tabs.sendMessage(tab.id, { action: 'toggle' }).catch(() => {});
+});
+chrome.commands.onCommand.addListener(async c => {
+  if (c === 'toggle-meter') {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) chrome.tabs.sendMessage(tab.id, { action: 'toggle' }).catch(() => {});
+  }
+});
