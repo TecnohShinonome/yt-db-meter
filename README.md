@@ -1,6 +1,6 @@
 # YouTube dB Meter Overlay
 
-YouTube の動画プレーヤーに **Peak / VU / LUFS** メーターを重ねて表示する Chrome 拡張（Manifest V3）。
+YouTube / YouTube Studio の動画プレーヤーに **Peak / VU / LUFS** メーターを重ねて表示する Chrome 拡張（Manifest V3）。
 
 ## 機能
 - **PK/VU**：太バー＝サンプルピーク (dBFS) / 中央の細バー＝VU (0 VU = −18 dBFS, 300 ms 弾道) / 横線＝ピークホールド

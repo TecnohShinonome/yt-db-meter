@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YouTube dB Meter Overlay",
-  "version": "1.1.0",
-  "description": "YouTube動画に Peak / VU / LUFS メーターをオーバーレイ表示（-14 LUFS基準線つき）",
+  "version": "1.2.0",
+  "description": "YouTube / YouTube Studio の動画に Peak / VU / LUFS メーターをオーバーレイ表示（-14 LUFS基準線つき）",
   "permissions": [
     "storage"
   ],
@@ -33,6 +33,7 @@
     {
       "matches": [
         "https://www.youtube.com/*",
+        "https://studio.youtube.com/*",
         "https://www.youtube-nocookie.com/*"
       ],
       "js": [
@@ -45,6 +46,7 @@
     {
       "matches": [
         "https://www.youtube.com/*",
+        "https://studio.youtube.com/*",
         "https://www.youtube-nocookie.com/*"
       ],
       "js": [

@@ -182,7 +182,25 @@ canvas{display:block;width:${W}px;height:${H}px}
     const player = video.closest('#movie_player, .html5-video-player') || video.parentElement;
     if (!player) return;
     if (!host) makeUI();
-    if (host.parentElement !== player) player.appendChild(host);
+    if (host.parentElement !== player) {
+      if (getComputedStyle(player).position === 'static') player.style.position = 'relative';
+      player.appendChild(host);
+    }
+    // 小さいプレーヤー（Studio のプレビュー等）では縮小して収める
+    const ph = player.clientHeight, hh = host.offsetHeight;
+    const sc = ph && hh ? Math.min(1, Math.max(0.5, (ph - 8) / hh)) : 1;
+    host.style.transformOrigin = '0 0'; host.style.transform = sc < 1 ? `scale(${sc})` : '';
+  }
+  // 表示中で一番大きい video を対象にする（youtube.com / Studio 共通）
+  function findVideo() {
+    const main = document.querySelector('video.html5-main-video');
+    if (main && main.offsetWidth) return main;
+    let best = null, area = 0;
+    for (const v of document.querySelectorAll('video')) {
+      const a = v.offsetWidth * v.offsetHeight;
+      if (a > area) { area = a; best = v; }
+    }
+    return best || main;
   }
 
   // ---------- drawing helpers (vertical) ----------
@@ -320,7 +338,7 @@ canvas{display:block;width:${W}px;height:${H}px}
   chrome.storage.onChanged.addListener(ch => { if (ch.visible) { S.visible = ch.visible.newValue; applyVis(); } });
 
   setInterval(() => {
-    const v = document.querySelector('video.html5-main-video') || document.querySelector('#movie_player video');
+    const v = findVideo();
     if (!v) return;
     mount(v);
     if ((!cur || cur.video !== v) && pending !== v) attach(v);
