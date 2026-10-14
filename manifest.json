@@ -1,0 +1,57 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube dB Meter Overlay",
+  "version": "1.1.0",
+  "description": "YouTube動画に Peak / VU / LUFS メーターをオーバーレイ表示（-14 LUFS基準線つき）",
+  "permissions": [
+    "storage"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "dBメーター 表示/非表示",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-meter": {
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
+      "description": "dBメーター 表示/非表示"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://www.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "volhook.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://www.youtube-nocookie.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
