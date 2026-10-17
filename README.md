@@ -12,7 +12,9 @@ YouTube / YouTube Music / YouTube Studio の動画プレーヤーに **Peak / VU
 - 広告再生中・一時停止中は Integrated に加算しない
 - ドラッグで移動、全画面でも表示。ツールバーアイコン / `Alt+Shift+M` で表示切替
 
-## [ダウンロード](https://github.com/TecnohShinonome/yt-db-meter/archive/refs/heads/main.zip)
+## ダウンロード 
+- [Github](https://github.com/TecnohShinonome/yt-db-meter/archive/refs/heads/main.zip)
+- [Chrome Webストア](https://chromewebstore.google.com/detail/db-meter-overlay-for-yout/gpncigfnmiafcbdjlggkdegplhmpkpgl)
 
 ## インストール
 1. `chrome://extensions` → デベロッパーモード ON
